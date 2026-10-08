@@ -1,0 +1,14 @@
+{
+  "name": "3M — Assistant personnel intelligent",
+  "short_name": "3M",
+  "description": "Assistant personnel local, vocal et extensible.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07110f",
+  "theme_color": "#07110f",
+  "lang": "fr",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
+

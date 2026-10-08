@@ -1,0 +1,8 @@
+id: calendar
+name: Calendrier de démonstration
+version: 0.1.0
+capabilities: [read_events, create_events, propose_slots]
+permissions: [calendar:read, calendar:write, calendar:delete:confirm]
+dependencies: []
+enabled: true
+
