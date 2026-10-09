@@ -7,10 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.core.database import get_session
 from backend.app.models.entities import AuditLog, CalendarEvent
 from backend.app.models.schemas import ConfirmationRequest, EventCreate, EventRead
+from backend.app.providers.calendar import calendar_provider
 from backend.app.security.auth import require_api_token
 from backend.app.services.confirmations import consume_confirmation, create_confirmation
 
 router = APIRouter(prefix="/calendar", tags=["calendar"], dependencies=[Depends(require_api_token)])
+
+
+@router.get("/provider/status")
+async def provider_status() -> dict:
+    return await calendar_provider.status()
 
 
 @router.get("/events", response_model=list[EventRead])

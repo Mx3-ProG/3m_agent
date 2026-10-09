@@ -1,8 +1,9 @@
 id: tasks
 name: Gestion des tâches
-version: 0.1.0
+version: 2.0.0
 capabilities: [list_tasks, create_task, update_task, complete_task]
 permissions: [tasks:read, tasks:write, tasks:delete:confirm]
 dependencies: []
+agents: [tasks]
+tools: [tasks.list, tasks.create, tasks.update, tasks.complete, tasks.delete]
 enabled: true
-

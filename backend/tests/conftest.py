@@ -10,13 +10,20 @@ os.environ["THREEM_API_TOKEN"] = "test-token"
 os.environ["THREEM_DEFAULT_LLM_PROVIDER"] = "demo"
 os.environ["THREEM_DEFAULT_LLM_MODEL"] = "3m-demo"
 
+from backend.app.agents.registry import agent_registry  # noqa: E402
 from backend.app.api.routes.calendar import seed_demo_calendar  # noqa: E402
 from backend.app.core.database import Base, SessionLocal, engine  # noqa: E402
 from backend.app.main import app  # noqa: E402
+from backend.app.skills.registry import skill_registry  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def database() -> AsyncIterator[None]:
+    skill_registry.discover()
+    for skill in skill_registry.list():
+        skill_registry.set_enabled(skill.id, True)
+    for agent in agent_registry.list_agents():
+        agent_registry.set_enabled(agent.id, True)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)

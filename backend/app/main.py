@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from backend.app.api.router import api_router
 from backend.app.api.routes.calendar import seed_demo_calendar
+from backend.app.api.routes.orchestration import restore_runtime_states
 from backend.app.core.config import get_settings
 from backend.app.core.database import SessionLocal, initialize_database
 
@@ -16,6 +17,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await initialize_database()
     async with SessionLocal() as session:
         await seed_demo_calendar(session)
+        await restore_runtime_states(session)
     yield
 
 

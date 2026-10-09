@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { api, CalendarEvent, SystemStatus, Task } from "@/lib/api";
+import { AgentStatus, api, CalendarEvent, SystemStatus, Task } from "@/lib/api";
 
 const formatter = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" });
 
@@ -9,19 +9,22 @@ export function Dashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [system, setSystem] = useState<SystemStatus>();
+  const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [taskTitle, setTaskTitle] = useState("");
   const [error, setError] = useState<string>();
 
   async function refresh() {
     try {
-      const [taskData, eventData, systemData] = await Promise.all([
+      const [taskData, eventData, systemData, agentData] = await Promise.all([
         api<Task[]>("tasks"),
         api<CalendarEvent[]>("calendar/events"),
         api<SystemStatus>("system"),
+        api<AgentStatus[]>("agents"),
       ]);
       setTasks(taskData);
       setEvents(eventData);
       setSystem(systemData);
+      setAgents(agentData);
       setError(undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Erreur de chargement");
@@ -46,6 +49,11 @@ export function Dashboard() {
     await refresh();
   }
 
+  async function toggleAgent(agent: AgentStatus) {
+    await api(`agents/${agent.id}/${agent.enabled ? "disable" : "enable"}`, { method: "POST" });
+    await refresh();
+  }
+
   return (
     <section className="dashboard-page">
       <header className="dashboard-header">
@@ -56,7 +64,7 @@ export function Dashboard() {
       <div className="stats-grid">
         <article><span className="card-icon">✓</span><small>Tâches ouvertes</small><strong>{tasks.filter((task) => task.status !== "done").length}</strong><p>{tasks.filter((task) => task.priority === "urgent").length} urgente(s)</p></article>
         <article><span className="card-icon">◇</span><small>Prochains événements</small><strong>{events.length}</strong><p>Calendrier de démonstration</p></article>
-        <article><span className="card-icon">◉</span><small>Agents disponibles</small><strong>{system?.agents.length ?? "—"}</strong><p>{system?.skills.filter((skill) => skill.enabled).length ?? 0} compétences actives</p></article>
+        <article><span className="card-icon">◉</span><small>Agents actifs</small><strong>{agents.filter((agent) => agent.enabled).length}</strong><p>{system?.skills.filter((skill) => skill.enabled).length ?? 0} compétences actives</p></article>
         <article><span className="card-icon">⌁</span><small>Fournisseurs configurés</small><strong>{system ? Object.values(system.providers.configured).filter(Boolean).length : "—"}</strong><p>Démo locale toujours disponible</p></article>
       </div>
       <div className="dashboard-grid">
@@ -85,10 +93,28 @@ export function Dashboard() {
         </article>
         <article className="panel agents-panel">
           <div className="panel-heading"><div><span className="eyebrow">Orchestration</span><h2>Agents</h2></div></div>
-          {system?.agents.map((agent) => <div className="agent-row" key={agent.id}><span>{agent.name.slice(0, 1)}</span><div><strong>{agent.name}</strong><small>{agent.description}</small></div><i title={agent.state} /></div>)}
+          {agents.map((agent) => (
+            <div className={`agent-row ${agent.enabled ? "" : "disabled"}`} key={agent.id}>
+              <span>{agent.name.slice(0, 1)}</span>
+              <div>
+                <strong>{agent.name}</strong>
+                <small>{agent.description}</small>
+                <small>{agent.tool_count} outils · {agent.health.status}{agent.last_used_at ? ` · utilisé ${new Date(agent.last_used_at).toLocaleString("fr-FR")}` : ""}</small>
+                {agent.health.provider ? <small>Provider {agent.health.provider.provider} · {agent.health.provider.authorization}</small> : null}
+              </div>
+              <button
+                type="button"
+                className="agent-toggle"
+                aria-pressed={agent.enabled}
+                aria-label={`${agent.enabled ? "Désactiver" : "Activer"} ${agent.name}`}
+                onClick={() => void toggleAgent(agent)}
+              >
+                <i />
+              </button>
+            </div>
+          ))}
         </article>
       </div>
     </section>
   );
 }
-

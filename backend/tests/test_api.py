@@ -69,7 +69,9 @@ async def test_memory_rejects_sensitive_item(client, auth):
 async def test_demo_calendar_is_seeded(client, auth):
     response = await client.get("/api/v1/calendar/events", headers=auth)
     assert response.status_code == 200
-    assert len(response.json()) == 2
+    events = response.json()
+    assert len(events) == 2
+    assert events[0]["starts_at"].endswith("+00:00")
 
 
 @pytest.mark.asyncio
@@ -79,3 +81,14 @@ async def test_system_lists_agents_and_skills(client, auth):
     body = response.json()
     assert {item["id"] for item in body["agents"]} == {"tasks", "calendar"}
     assert {item["id"] for item in body["skills"]} == {"tasks", "calendar"}
+
+
+@pytest.mark.asyncio
+async def test_calendar_provider_status_is_explicit(client, auth):
+    response = await client.get("/api/v1/calendar/provider/status", headers=auth)
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "demo",
+        "available": True,
+        "authorization": "not_required",
+    }

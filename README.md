@@ -1,7 +1,8 @@
 # 3M — Assistant personnel intelligent
 
-Première version locale d’un assistant personnel unifié : conversation, fournisseurs LLM
-interchangeables, mémoire, tâches, calendrier de démonstration, agents, compétences, voix et PWA.
+Assistant personnel local avec orchestrateur multi-agent exécutable : conversation, fournisseurs
+LLM interchangeables, mémoire, tâches, calendrier de démonstration, outils typés, confirmations,
+traces d’exécution, voix et PWA.
 
 ## État réel
 
@@ -10,7 +11,10 @@ interchangeables, mémoire, tâches, calendrier de démonstration, agents, comp�
   configurés et testés avec leurs services réels.
 - La reconnaissance et la lecture vocales utilisent d’abord les capacités du navigateur. Ce
   n’est pas une conversation audio duplex temps réel.
-- Le calendrier Apple n’est pas encore connecté ; la V1 utilise des événements SQLite de démo.
+- Le provider Apple Calendar est disponible via un pont EventKit local opt-in. Le provider SQLite
+  de démonstration reste actif par défaut et aucune permission Apple n’est demandée automatiquement.
+- `CalendarAgent` et `TaskAgent` exécutent réellement leurs outils via un plan validé. Les écritures
+  sensibles demandent une confirmation avant tout effet.
 - L’accès HTTPS iPhone est documenté mais nécessite une validation sur l’appareil physique.
 
 ## Prérequis
@@ -58,6 +62,43 @@ Pour Ollama, démarrer le service et télécharger explicitement le modèle souh
 ```
 
 Ce script lance Ruff, les tests backend, le contrôle TypeScript et le build de production Next.js.
+
+Les routes privées `/api/v1/agents`, `/skills`, `/tools` et `/executions` exposent l’état réel de
+l’orchestrateur. Les agents peuvent être activés ou désactivés depuis le dashboard ou par API.
+La conversation utilise `/api/v1/conversations/chat/stream` pour transmettre les états réels de
+planification, d’appel d’agent, d’exécution d’outil et de réponse.
+
+## Activer Apple Calendar sur macOS
+
+Construire le pont local :
+
+```bash
+./scripts/build-apple-calendar-bridge.sh
+```
+
+Vérifier son statut sans demander de permission :
+
+```bash
+native/apple-calendar-bridge/.build/apple-calendar-bridge status
+```
+
+La commande suivante affiche la demande d’autorisation macOS et doit être lancée volontairement :
+
+```bash
+native/apple-calendar-bridge/.build/apple-calendar-bridge request-access
+```
+
+Après autorisation, configurer puis redémarrer 3M :
+
+```dotenv
+THREEM_CALENDAR_PROVIDER=apple
+THREEM_APPLE_CALENDAR_BRIDGE_PATH=native/apple-calendar-bridge/.build/apple-calendar-bridge
+# Facultatif : identifiant EventKit d’un calendrier précis.
+THREEM_APPLE_CALENDAR_IDENTIFIER=
+```
+
+`GET /api/v1/calendar/provider/status` permet de vérifier le provider actif. Les créations,
+modifications et suppressions continuent d’exiger une confirmation conversationnelle.
 
 ## Documentation
 

@@ -1,12 +1,14 @@
 {
   "name": "3m-web",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:mic": "node --experimental-strip-types --test lib/microphone-machine.test.ts"
   },
   "dependencies": {
     "next": "^16.1.0",
@@ -20,4 +22,3 @@
     "typescript": "^5.9.0"
   }
 }
-

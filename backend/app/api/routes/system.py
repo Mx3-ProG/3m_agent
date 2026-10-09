@@ -31,7 +31,7 @@ async def system_status() -> dict:
     return {
         "status": "operational",
         "agents": [asdict(descriptor) for descriptor in agent_registry.list_agents()],
-        "skills": [asdict(skill) for skill in skills],
+        "skills": [skill.model_dump(mode="json") for skill in skills],
         "providers": {
             "available": llm_registry.list(),
             "configured": {

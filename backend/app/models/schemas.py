@@ -1,7 +1,15 @@
-from datetime import datetime
+import json
+from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 
 class ORMModel(BaseModel):
@@ -13,6 +21,7 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     provider: Literal["demo", "openai", "anthropic", "ollama"] | None = None
     model: str | None = Field(default=None, max_length=120)
+    preferred_agent: str | None = Field(default=None, max_length=80)
 
 
 class ChatResponse(BaseModel):
@@ -21,6 +30,11 @@ class ChatResponse(BaseModel):
     response: str
     provider: str
     model: str
+    execution_id: str | None = None
+    state: str = "responding"
+    agents_used: list[str] = Field(default_factory=list)
+    tools_used: list[str] = Field(default_factory=list)
+    confirmation_id: str | None = None
 
 
 class MessageRead(ORMModel):
@@ -29,7 +43,15 @@ class MessageRead(ORMModel):
     content: str
     provider: str | None
     model: str | None
+    agent_used: str | None = None
+    tools_used: list[str] = Field(default_factory=list)
+    execution_id: str | None = None
     created_at: datetime
+
+    @field_validator("tools_used", mode="before")
+    @classmethod
+    def parse_tools(cls, value):
+        return json.loads(value) if isinstance(value, str) else value
 
 
 class ConversationRead(ORMModel):
@@ -37,6 +59,19 @@ class ConversationRead(ORMModel):
     title: str
     created_at: datetime
     updated_at: datetime
+    last_message_at: datetime
+    status: str
+    summary: str = ""
+    active_topic: str = ""
+
+
+class ConversationCreate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+
+
+class ConversationUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    status: Literal["active", "archived"] | None = None
 
 
 class TaskCreate(BaseModel):
@@ -86,6 +121,11 @@ class EventRead(ORMModel):
     location: str
     notes: str
     source: str
+
+    @field_serializer("starts_at", "ends_at")
+    def serialize_utc(self, value: datetime) -> str:
+        aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        return aware.isoformat()
 
 
 class MemoryCreate(BaseModel):

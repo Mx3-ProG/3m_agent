@@ -1,9 +1,20 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { api, AssistantMessage } from "@/lib/api";
+import { api, type AssistantMessage, type ConversationSummary, streamChat } from "@/lib/api";
 
-type ConversationState = "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "error";
+type ConversationState =
+  | "idle"
+  | "listening"
+  | "transcribing"
+  | "thinking"
+  | "planning"
+  | "calling_agent"
+  | "executing_tool"
+  | "speaking"
+  | "responding"
+  | "waiting_confirmation"
+  | "error";
 type SpeechRecognitionInstance = {
   lang: string;
   interimResults: boolean;
@@ -14,15 +25,29 @@ type SpeechRecognitionInstance = {
   onerror: (() => void) | null;
   onend: (() => void) | null;
 };
+type MicrophoneMode = "push" | "continuous";
 
 const stateLabels: Record<ConversationState, string> = {
   idle: "Prêt",
   listening: "Je vous écoute…",
   transcribing: "Transcription…",
   thinking: "Réflexion…",
+  planning: "Planification…",
+  calling_agent: "Appel de l’agent…",
+  executing_tool: "Exécution de l’outil…",
   speaking: "Réponse vocale…",
+  responding: "Préparation de la réponse…",
+  waiting_confirmation: "Confirmation requise",
   error: "Une erreur est survenue",
 };
+
+const busyStates = new Set<ConversationState>([
+  "thinking",
+  "planning",
+  "calling_agent",
+  "executing_tool",
+  "responding",
+]);
 
 export function Conversation() {
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
@@ -30,11 +55,29 @@ export function Conversation() {
   const [conversationId, setConversationId] = useState<string>();
   const [state, setState] = useState<ConversationState>("idle");
   const [error, setError] = useState<string>();
+  const [activity, setActivity] = useState<string>();
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [microphoneMode, setMicrophoneMode] = useState<MicrophoneMode>("push");
+  const [continuousActive, setContinuousActive] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const continuousRef = useRef(false);
+  const busyRef = useRef(false);
+  const speakingRef = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("conversation");
+    if (!id) return;
+    setConversationId(id);
+    Promise.all([
+      api<ConversationSummary>(`conversations/${id}`),
+      api<AssistantMessage[]>(`conversations/${id}/messages`),
+    ])
+      .then(([, history]) => setMessages(history))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : "Erreur de reprise"));
+  }, []);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -42,28 +85,32 @@ export function Conversation() {
 
   async function sendMessage(text: string) {
     const clean = text.trim();
-    if (!clean || state === "thinking") return;
+    if (!clean || busyStates.has(state)) return;
     setError(undefined);
     setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", content: clean }]);
     setInput("");
     setState("thinking");
+    busyRef.current = true;
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setActivity("Connexion à l’orchestrateur…");
     try {
-      const response = await api<{
-        conversation_id: string;
-        message_id: string;
-        response: string;
-        provider: string;
-        model: string;
-      }>("conversations/chat", {
-        method: "POST",
-        body: JSON.stringify({
+      const response = await streamChat(
+        {
           message: clean,
           conversation_id: conversationId,
           provider: provider || undefined,
           model: model || undefined,
-        }),
-      });
+        },
+        (progress) => {
+          if (progress.state in stateLabels) setState(progress.state as ConversationState);
+          setActivity(progress.label);
+        },
+      );
       setConversationId(response.conversation_id);
+      if (!conversationId) {
+        window.history.replaceState(null, "", `/?conversation=${response.conversation_id}`);
+      }
       setMessages((current) => [
         ...current,
         {
@@ -72,12 +119,26 @@ export function Conversation() {
           content: response.response,
           provider: response.provider,
           model: response.model,
+          state: response.state,
+          agents_used: response.agents_used,
+          tools_used: response.tools_used,
+          confirmation_id: response.confirmation_id,
         },
       ]);
-      if (voiceEnabled) speak(response.response);
-      else setState("idle");
+      const settledState =
+        response.state === "waiting_confirmation"
+          ? "waiting_confirmation"
+          : response.state === "error"
+            ? "error"
+            : "idle";
+      setActivity(undefined);
+      window.dispatchEvent(new Event("3m:conversations-changed"));
+      if (voiceEnabled) speak(response.response, settledState);
+      else finishTurn(settledState);
     } catch (caught) {
+      busyRef.current = false;
       setState("error");
+      setActivity(undefined);
       setError(caught instanceof Error ? caught.message : "Erreur inconnue");
     }
   }
@@ -87,33 +148,56 @@ export function Conversation() {
     void sendMessage(input);
   }
 
-  function speak(text: string) {
+  function speak(text: string, settledState: ConversationState = "idle") {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
     if (!("speechSynthesis" in window)) {
-      setState("idle");
+      finishTurn(settledState);
       return;
     }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "fr-FR";
     utterance.rate = 1.02;
-    utterance.onstart = () => setState("speaking");
-    utterance.onend = () => setState("idle");
-    utterance.onerror = () => setState("idle");
+    utterance.onstart = () => {
+      speakingRef.current = true;
+      setState("speaking");
+    };
+    utterance.onend = () => {
+      speakingRef.current = false;
+      finishTurn(settledState);
+    };
+    utterance.onerror = () => {
+      speakingRef.current = false;
+      finishTurn(settledState);
+    };
     window.speechSynthesis.speak(utterance);
+  }
+
+  function finishTurn(settledState: ConversationState) {
+    busyRef.current = false;
+    if (continuousRef.current && settledState !== "error") {
+      setState("listening");
+      window.setTimeout(startListening, 250);
+    } else {
+      setState(settledState);
+    }
   }
 
   function stopAudio() {
     window.speechSynthesis?.cancel();
-    recognitionRef.current?.stop();
-    setState("idle");
+    speakingRef.current = false;
+    busyRef.current = false;
+    if (continuousRef.current) {
+      setState("listening");
+      window.setTimeout(startListening, 100);
+    } else {
+      setState("idle");
+    }
   }
 
-  function toggleMicrophone() {
-    if (state === "listening") {
-      recognitionRef.current?.stop();
-      setState("transcribing");
-      return;
-    }
+  function startListening() {
+    if (busyRef.current || speakingRef.current || recognitionRef.current) return;
     const scope = window as typeof window & {
       SpeechRecognition?: new () => SpeechRecognitionInstance;
       webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
@@ -138,6 +222,7 @@ export function Conversation() {
       setInput(transcript);
       if (final) {
         setState("transcribing");
+        busyRef.current = true;
         recognition.stop();
         void sendMessage(transcript);
       }
@@ -146,11 +231,53 @@ export function Conversation() {
       setError("Le microphone n’a pas pu être utilisé. Vérifiez son autorisation dans le navigateur.");
       setState("error");
     };
-    recognition.onend = () => setState((current) => (current === "listening" ? "idle" : current));
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      if (continuousRef.current && !busyRef.current && !speakingRef.current) {
+        setState("listening");
+        window.setTimeout(startListening, 300);
+      } else if (!continuousRef.current && !busyRef.current) {
+        setState("idle");
+      }
+    };
     recognitionRef.current = recognition;
     recognition.start();
     setError(undefined);
     setState("listening");
+  }
+
+  function disableMicrophone() {
+    continuousRef.current = false;
+    setContinuousActive(false);
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    window.speechSynthesis?.cancel();
+    speakingRef.current = false;
+    busyRef.current = false;
+    setState("idle");
+  }
+
+  function toggleMicrophone() {
+    if (microphoneMode === "continuous") {
+      if (continuousRef.current) {
+        disableMicrophone();
+      } else {
+        continuousRef.current = true;
+        setContinuousActive(true);
+        startListening();
+      }
+      return;
+    }
+    if (state === "listening") {
+      disableMicrophone();
+    } else {
+      startListening();
+    }
+  }
+
+  function changeMicrophoneMode(mode: MicrophoneMode) {
+    disableMicrophone();
+    setMicrophoneMode(mode);
   }
 
   return (
@@ -168,6 +295,13 @@ export function Conversation() {
           <input value={model} onChange={(event) => setModel(event.target.value)} aria-label="Modèle" placeholder="Modèle par défaut" />
         </div>
       </header>
+
+      {continuousActive ? (
+        <div className="privacy-indicator" role="status">
+          <i /> Micro actif — conversation continue
+          <button type="button" onClick={disableMicrophone}>Couper</button>
+        </div>
+      ) : null}
 
       <div className="conversation-stage">
         {messages.length === 0 ? (
@@ -188,10 +322,22 @@ export function Conversation() {
               <article key={message.id} className={`message ${message.role}`}>
                 <span>{message.role === "assistant" ? "3M" : "Vous"}</span>
                 <p>{message.content}</p>
-                {message.provider && <small>{message.provider} · {message.model}</small>}
+                {message.role === "assistant" && (
+                  <div className="execution-meta">
+                    {message.tools_used?.map((tool) => <code key={tool}>{tool}</code>)}
+                    {message.agents_used?.map((agent) => <span key={agent}>{agent}</span>)}
+                    {message.state === "waiting_confirmation" ? <strong>Confirmation requise</strong> : null}
+                    {message.provider ? <small>{message.provider} · {message.model}</small> : null}
+                  </div>
+                )}
               </article>
             ))}
-            {state === "thinking" && <div className="thinking"><i /><i /><i /></div>}
+            {busyStates.has(state) ? (
+              <div className="live-progress" role="status">
+                <div className="thinking"><i /><i /><i /></div>
+                <span>{activity ?? stateLabels[state]}</span>
+              </div>
+            ) : null}
             <div ref={endRef} />
           </div>
         )}
@@ -200,12 +346,18 @@ export function Conversation() {
       <div className="composer-area">
         {error && <div className="error-banner" role="alert">{error}</div>}
         <form className="composer" onSubmit={submit}>
-          <button type="button" className={`mic-button ${state === "listening" ? "active" : ""}`} onClick={toggleMicrophone} aria-label="Activer ou désactiver le microphone">●</button>
+          <button type="button" className={`mic-button ${state === "listening" || continuousActive ? "active" : ""}`} onClick={toggleMicrophone} aria-label={continuousActive ? "Désactiver le microphone" : "Activer le microphone"}>●</button>
           <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Écrivez ou utilisez le microphone…" aria-label="Message" />
           {(state === "speaking" || state === "listening") && <button type="button" className="stop-button" onClick={stopAudio} aria-label="Interrompre">■</button>}
-          <button className="send-button" type="submit" disabled={!input.trim() || state === "thinking"}>↑</button>
+          <button className="send-button" type="submit" disabled={!input.trim() || busyStates.has(state)}>↑</button>
         </form>
-        <label className="voice-toggle"><input type="checkbox" checked={voiceEnabled} onChange={(event) => setVoiceEnabled(event.target.checked)} /> Lecture vocale navigateur</label>
+        <div className="conversation-options">
+          <div className="microphone-mode" aria-label="Mode du microphone">
+            <button type="button" className={microphoneMode === "push" ? "active" : ""} onClick={() => changeMicrophoneMode("push")}>Appuyer pour parler</button>
+            <button type="button" className={microphoneMode === "continuous" ? "active" : ""} onClick={() => changeMicrophoneMode("continuous")}>Conversation continue</button>
+          </div>
+          <label className="voice-toggle"><input type="checkbox" checked={voiceEnabled} onChange={(event) => setVoiceEnabled(event.target.checked)} /> Voix de 3M</label>
+        </div>
       </div>
     </section>
   );

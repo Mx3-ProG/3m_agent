@@ -19,6 +19,16 @@ class Settings(BaseSettings):
     default_llm_provider: str = "demo"
     default_llm_model: str = "3m-demo"
     max_tts_characters: int = 2500
+    max_execution_steps: int = 8
+    tool_timeout_seconds: float = 15.0
+    confirmation_ttl_minutes: int = 15
+    calendar_provider: str = "demo"
+    apple_calendar_bridge_path: str = "native/apple-calendar-bridge/.build/apple-calendar-bridge"
+    apple_calendar_identifier: str = ""
+    context_recent_messages: int = 20
+    context_budget_characters: int = 16_000
+    conversation_summary_threshold: int = 24
+    user_timezone: str = "Europe/Paris"
 
     @property
     def origins(self) -> list[str]:
